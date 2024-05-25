@@ -1,31 +1,22 @@
-import os as OS
-import argparse as ARGUMENT
-import re as REGEX
-import pandas as PD
-from UtilityLib import UtilityManager
-import matplotlib.pyplot as PLOT
-import shutil as SHUtil
+from . import __version__, __description__, __build__, __name__
+from UtilityLib import ProjectManager
 
-class GMXvg(UtilityManager):
-  __package__ = "GMXvg"
-  __version__ = "0.4"
-  __subversion__ = "20230830"
-  __author__ = "Vishal Kumar Sahu"
-
+class GMXvg(ProjectManager):
+  __name__= __name__
+  __version__= __version__
+  __build__= __build__
+  __description__= __description__
+  name = __name__
+  version = __version__
+  version_info = f"{__version__} ({__build__})"
+  # log_level = 'info'
   def __init__(self, *args, **kwargs):
-    super(GMXvg, self).__init__(**kwargs)
-    _use_tex = True if SHUtil.which('latex') else False
-    PLOT.rcParams.update({
-      "text.usetex": _use_tex,
-      "font.family": "sans-serif",
-    })
-    self.__update_attr(**kwargs)
+    super().__init__(**kwargs)
+    self.preset('data plot')
+    self.__set_defaults(**kwargs)
 
-  def __set_defaults(self):
-    self.csv_filepath = f"{self.path_base}{OS.sep}{self.csv_filename}"
-
-  def __update_attr(self, *args, **kwargs):
-    if not hasattr(self, "__defaults"): self.__defaults =  {
+  def __set_defaults(self, *args, **kwargs):
+    __defaults =  {
         "replacements_gmx": {
           'Hydrogen bonds': None,
           'Rg': None,
@@ -36,8 +27,7 @@ class GMXvg(UtilityManager):
         },
         "replacements": {},
         "csv_filename": "XVG-Plot-Values.csv",
-        "csv_filepath": None,
-        "path_base": OS.getcwd(),
+        "path_base": self.OS.getcwd(),
         "path_move": None,
         "path_copy": None,
         "pattern_xvg": "*.xvg",
@@ -52,18 +42,22 @@ class GMXvg(UtilityManager):
         "output_files": []
       }
 
-    # Set all defaults
-    [setattr(self, _k, self.__defaults[_k]) for _k in self.__defaults.keys() if not hasattr(self, _k)]
-    self.__defaults = dict() # Unset defaults to prevent running for second time
-    [setattr(self, _k, kwargs[_k]) for _k in kwargs.keys()]
+    __defaults.update(kwargs)
+    self.require('shutil', 'SHUtil')
+    _use_tex = True if self.SHUtil.which('latex') else False
+    self.PLOT.rcParams.update({
+      "text.usetex": _use_tex,
+      "font.family": "sans-serif",
+    })
+    self.require('re', 'REGEX')
+    self.update_attributes(self, __defaults)
 
-    self.__set_defaults()
-
-  def __plot_xvgs(self, *args, **kwargs):
-    _xvgs = args[0] if len(args) > 0 else kwargs.get("xvg_paths")
+  def _plot_xvgs(self, *args, **kwargs):
+    """Plots XVG files from the given list"""
+    _xvgs = kwargs.get("xvg_paths", args[0] if len(args) > 0 else None)
     _result_dict = []
     for _xvg in _xvgs:
-      _result = self.__plot_xvg(_xvg, **kwargs)
+      _result = self._plot_xvg(_xvg, **kwargs)
       _file_name = self.filename(_xvg)
       _dir_name = _xvg.split(self.path_base)[-1]
       _dir_name = _dir_name.replace(self.filename(_xvg, with_ext=True), "")
@@ -82,13 +76,17 @@ class GMXvg(UtilityManager):
             "max": _result[_col].max(),
         })
     if getattr(self, "flag_export_csv", False) and len(_result_dict) > 0:
-      _results = PD.DataFrame(_result_dict)
-      self.log_info(f"Writing results to {self.csv_filepath}.")
-      _results.to_csv(self.csv_filepath, index=False)
+      _results = self.DF(_result_dict)
+      self.log_info(f"Writing results to {self.csv_filename}.")
+      _results.to_csv(self.get_path(self.csv_filename), index=False)
     else:
       self.log_info("Not writing the results.", type="warn")
 
-  def __find_xvgs(self, *args, **kwargs):
+  def _find_gmxvg_files(self, *args, **kwargs):
+    """Finds files with XVG extension"""
+
+    _file_type = kwargs.get('file_type', args[0] if len(args) > 0 else '.xvg')
+
     _xvgs = []
     if hasattr(self, "pattern_dir"):
       self.pattern_dir = [self.pattern_dir] if isinstance(self.pattern_dir, str) else self.pattern_dir
@@ -101,47 +99,50 @@ class GMXvg(UtilityManager):
           _x = self.search_files(_dir, _px)
           _xvgs.extend(_x)
     else:
-      _xvgs = self.get_file_types(self.path_base, (".xvg"))
+      _xvgs = self.get_file_types(self.path_base, (_file_type))
 
     return _xvgs
 
-  def __rearrange_files(self):
+  def _rearrange_files(self):
     _bool_copy = getattr(self, "path_copy") and len(self.path_copy) > 2
     _bool_move = getattr(self, "path_move") and len(self.path_move) > 2
-    self.output_files.append(self.csv_filepath)
+
+    if not any([_bool_copy, _bool_move]):
+      self.log_debug('No action set to file rearrange.')
+      return
+
+    self.output_files.append(self.get_path(self.csv_filename))
     for _file in self.output_files:
       _rel_path = _file.split(self.path_base)[-1]
       _rel_path = _rel_path.strip("/")
 
-      self.copy(_file, f"{self.path_copy}/{_rel_path}") if _bool_copy and self.check_path(_file) else None
-      self.move(_file, f"{self.path_move}/{_rel_path}") if _bool_move and self.check_path(_file) else None
+      self.copy(_file, f"{self.path_copy}/{_rel_path}".replace('//', '/')) if _bool_copy and self.check_path(_file) else None
+      self.move(_file, f"{self.path_move}/{_rel_path}".replace('//', '/')) if _bool_move and self.check_path(_file) else None
 
-  @staticmethod
-  def process_text(_str):
-      _str = _str.strip()
-      _str = r'{}'.format(_str)
-      _str = REGEX.sub(r'\s{2,}', " ", _str)
-      _str = REGEX.sub(r'[\s-]{1,}', " ", _str)
-      _str = _str.replace("_", "-")
-      _str = REGEX.sub(r'\\S(\w+)\\N', "$^\\1$", _str)
-      _str = REGEX.sub(r'\\s(\w)\\N', "$_\\1$", _str)
-      return _str
+  def process_text(self, _str):
+    _str = _str.strip()
+    _str = r'{}'.format(_str)
+    _str = self.REGEX.sub(r'\s{2,}', " ", _str)
+    _str = self.REGEX.sub(r'[\s-]{1,}', " ", _str)
+    _str = _str.replace("_", "-")
+    _str = self.REGEX.sub(r'\\S(\w+)\\N', "$^\\1$", _str)
+    _str = self.REGEX.sub(r'\\s(\w)\\N', "$_\\1$", _str)
+    return _str
 
-  @staticmethod
-  def process_attrib(_line):
-      _line = _line.strip("@").strip()
-      _matches = REGEX.findall('(.*)"([^"]*)"', _line)
-      _attribs = {}
-      if _line.startswith("legend"):
-          _ls = _line.split(" ", 1)
-          _attribs["plot_display_setting"] = GMXvg.process_text(_ls[-1])
-      elif len(_matches) > 0:
-        for _v in _matches:
-          _attribs[GMXvg.process_text(_v[0])] = GMXvg.process_text(_v[-1])
-      elif len(_line.split(" ", 1)) == 2:
-          _ls = _line.split(" ", 1)
-          _attribs[GMXvg.process_text(_ls[0])] = GMXvg.process_text(_ls[-1])
-      return _attribs
+  def process_attrib(self, _line):
+    _line = _line.strip("@").strip()
+    _matches = self.REGEX.findall('(.*)"([^"]*)"', _line)
+    _attribs = {}
+    if _line.startswith("legend"):
+      _ls = _line.split(" ", 1)
+      _attribs["plot_display_setting"] = self.process_text(_ls[-1])
+    elif len(_matches) > 0:
+      for _v in _matches:
+        _attribs[self.process_text(_v[0])] = self.process_text(_v[-1])
+    elif len(_line.split(" ", 1)) == 2:
+      _ls = _line.split(" ", 1)
+      _attribs[self.process_text(_ls[0])] = self.process_text(_ls[-1])
+    return _attribs
 
   def __parse_xvg_table_attributes(self, _xvg_path):
     _xvg_content = self.read_text(_xvg_path)
@@ -149,18 +150,18 @@ class GMXvg(UtilityManager):
     _data_rows = []
     _attributes = {}
     for _line in _xvg_content:
-        _line = _line.strip("\n").strip()
-        if _line.startswith("#"):
-          continue # As it is a comment
-        elif _line.startswith("@"):
-          _attr = self.process_attrib(_line)
-          if len(_attr.keys()) > 0 and isinstance(_attr, dict):
-            _attributes.update(_attr)
-        else:
-          _data_rows.append(_line.split())
+      _line = _line.strip("\n").strip()
+      if _line.startswith("#"):
+        continue # As it is a comment
+      elif _line.startswith("@"):
+        _attr = self.process_attrib(_line)
+        if len(_attr.keys()) > 0 and isinstance(_attr, dict):
+          _attributes.update(_attr)
+      else:
+        _data_rows.append(_line.split())
 
-    _df = PD.DataFrame(_data_rows)
-    _df = _df.apply(PD.to_numeric)
+    _df = self.DF(_data_rows)
+    _df = _df.apply(self.PD.to_numeric)
 
     _xaxis_label = _attributes.get('xaxis label')
     _yaxis_label = _attributes.get('yaxis label')
@@ -177,9 +178,10 @@ class GMXvg(UtilityManager):
     return (_df, _attributes)
 
   # Parse XVG File and Plot Graph
-  def __plot_xvg(self, *args, **kwargs):
+  def _plot_xvg(self, *args, **kwargs):
     _xvg = args[0] if len(args) > 0 else kwargs.get("xvg_path")
-    self.log_info(f"Plotting {_xvg}.")
+    _rel_fp = _xvg.replace(self.path_base, './').replace('//', '/')
+    self.log_info(f"Plotting {_rel_fp}.")
 
     _df, _attributes = self.__parse_xvg_table_attributes(_xvg)
 
@@ -194,24 +196,24 @@ class GMXvg(UtilityManager):
       _plot_title = self.process_text(self.filename(_xvg))
 
       if _attributes.get("subtitle"):
-          _subtitle = self.process_text(_attributes.get("subtitle"))
-          _plot_title = f"{_plot_title}\n{_subtitle}"
+        _subtitle = self.process_text(_attributes.get("subtitle"))
+        _plot_title = f"{_plot_title}\n{_subtitle}\n"
 
       _plot = _df.set_index(_df.columns[0]).plot(title=_plot_title, linewidth=1)
 
       for _pl in _plot.get_lines():
-          _pl_ydata = _pl.get_ydata()
-          _pl_ydata_mean = _pl_ydata.mean()
+        _pl_ydata = _pl.get_ydata()
+        _pl_ydata_mean = _pl_ydata.mean()
 
-          if self.flag_plot_mean.lower().startswith("y"):
-            _plot.axhline(y=_pl_ydata_mean, color=_pl.get_color(), linestyle="--", linewidth=1)
+        if self.flag_plot_mean.lower().startswith("y"):
+          _plot.axhline(y=_pl_ydata_mean, color=_pl.get_color(), linestyle="--", linewidth=1)
 
-          if self.flag_plot_std.lower().startswith("y"):
-            _pl_ydata_std = _pl_ydata.std()
-            _pl_ydata_upper = _pl_ydata_mean + _pl_ydata_std
-            _pl_ydata_lower = _pl_ydata_mean - _pl_ydata_std
-            _plot.axhline(y=_pl_ydata_upper, color=_pl.get_color(), linestyle="--", linewidth=0.5)
-            _plot.axhline(y=_pl_ydata_lower, color=_pl.get_color(), linestyle="--", linewidth=0.5)
+        if self.flag_plot_std.lower().startswith("y"):
+          _pl_ydata_std = _pl_ydata.std()
+          _pl_ydata_upper = _pl_ydata_mean + _pl_ydata_std
+          _pl_ydata_lower = _pl_ydata_mean - _pl_ydata_std
+          _plot.axhline(y=_pl_ydata_upper, color=_pl.get_color(), linestyle="--", linewidth=0.5)
+          _plot.axhline(y=_pl_ydata_lower, color=_pl.get_color(), linestyle="--", linewidth=0.5)
 
       _legend = _plot.legend(fontsize=8)
       _plot.set_xlabel(_xaxis_label)
@@ -225,19 +227,19 @@ class GMXvg(UtilityManager):
           _figure = _plot.get_figure()
           _figure.savefig(_out_file, dpi=int(_d), bbox_inches='tight')
       _figure.clear()
-      PLOT.close(_figure)
+      self.PLOT.close(_figure)
 
     return _df
 
   def __merge_xvgs(self, *args, **kwargs):
-    self.__update_attr(**kwargs)
+    self.update_attributes(**kwargs)
 
     self.merge_patterns = [self.merge_patterns] if isinstance(self.merge_patterns, str) else self.merge_patterns
     _replacements = {}
     _replacements.update(self.replacements_gmx)
 
     for _r in self.replacements:
-      _k_v = REGEX.split('[:=]', _r)
+      _k_v = self.REGEX.split('[:=]', _r)
       if len(_k_v) > 1:
         _k = _k_v[0]
         _v = _k_v[-1]
@@ -274,8 +276,7 @@ class GMXvg(UtilityManager):
           else:
             _merged_df[_complex_name] = _df_min[_complex_name]
 
-
-        if isinstance(_merged_df, PD.DataFrame):
+        if isinstance(_merged_df, self.PD.DataFrame):
           _plot = _merged_df.set_index(_required_cols[0]).plot(title=_plot_name, lw=1)
           _legend = _plot.legend(fontsize=6)
           _plot.set_ylabel(self.process_text(_y_label))
@@ -302,42 +303,56 @@ class GMXvg(UtilityManager):
             _figure.savefig(_out_file, dpi=int(_d), bbox_inches='tight')
 
           _figure.clear()
-          PLOT.close(_figure)
-          PLOT.cla()
+          self.PLOT.close(_figure)
+          self.PLOT.cla()
         else:
           self.log_error("Some error occurred.")
     else:
-      self.log_error("Error with working dir.")
+      self.log_error(f"Error with working dir. path_base (-b) is not defined or current directory ({self.path_base}) does not contain xvg files.")
 
+  key__multidir = 'plot_multidir'
   def export_xvg(self, *args, **kwargs):
-    self.__update_attr(**kwargs)
+    self.update_attributes(self, kwargs)
     self.pattern_xvg = [self.pattern_xvg] if isinstance(self.pattern_xvg, str) else self.pattern_xvg
 
-    if isinstance(self.path_base, (str)):
+    if hasattr(self, self.key__multidir) and isinstance(getattr(self, self.key__multidir), (tuple, set, list)):
+      self.log_info(f'Plotting in multiple directories.')
+      for _enum, _bp in enumerate(getattr(self, self.key__multidir)):
+        self.log_info(f'>>> Processing {_enum+1}: {_bp}')
+        self.path_base = _bp
+        self.__merge_xvgs() if len(self.merge_patterns) > 0 else ""
+        self._plot_xvgs(self._find_gmxvg_files())
+        self._rearrange_files()
+    elif isinstance(self.path_base, (str)):
+      self.log_info(f'Plotting in single directory {self.path_base}.')
       self.__merge_xvgs() if len(self.merge_patterns) > 0 else ""
-      self.__plot_xvgs(self.__find_xvgs())
-      self.__rearrange_files()
+      self._plot_xvgs(self._find_gmxvg_files())
+      self._rearrange_files()
     else:
-      self.log_error("Error with working dir.")
+      self.log_error(f"There seems some error with working dir ({self.path_base}).")
 
-def xvgplot():
-  print(f"{GMXvg.__package__} v{GMXvg.__version__} (Build-{GMXvg.__subversion__})")
-  print("=" * 80)
-  print(f"Other available options are:")
-  print(f"csv_filename, csv_filepath, path_base, path_move, path_copy, pattern_xvg, merge_patterns,")
-  print(f"export_ext, dpi, flag_plot_mean, flag_plot_std, flag_export_csv, flag_export_plot, output_files")
-  print("=" * 80)
-  _plotter = GMXvg()
-  _parser = ARGUMENT.ArgumentParser(prog=GMXvg.name)
+  def _clean_gmxvg_files(self):
+    """@precaution: Take backup before cleaning files as it may lose important data."""
+    _n_files = sum(self.delete_files(self._find_gmxvg_files(('jpg', 'csv', 'svg'))))
+    self.log_info(f'Deleted {_n_files} files.')
 
-  _parser.add_argument('-b', '--path_base', nargs = None, default = OS.getcwd(), help = 'Provide base directory. Default: %(default)s.')
-  _parser.add_argument('-e', '--export_ext', nargs = "*", default = ["jpg"], help = 'Output formats. Default: %(default)s.')
-  _parser.add_argument('-d', '--dpi', nargs = "*", default = [300], help = 'Output quality. Default: %(default)s.')
+  # Manage commandline operations
+  def _update_cli_args(self):
+    # key: (['arg_k1', 'arg_k2'], nargs, default, help, {})
+    _version_info = f"{self.name} {self.version} ({self.__build__})"
+    _cli_settings = {
+      "log_level": (['-log'], None, 'info', 'Provide logging level', {}),
+      "path_base": (['-b'], None, self.OS.getcwd(), 'Provide base directory(s) to run GMXvg.', {}),
+      "plot_multidir": (['-md'], "*", None, 'Plot multiple directories.', {}),
+      "export_ext": (['-e'], "*", ["jpg"], 'Output formats like svg, jpg, png, wmf, emf etc. One of multiple output extensions can be defined.', {}),
+      "dpi": (['-d'], "*", [300], 'Output quality(s). 72 for quick view and 600/1200 for publication.', {}),
+    }
 
-  _reg_args, _unreg_args = _parser.parse_known_args()
-  _reg_args = vars(_reg_args)
-  _reg_args = {_k: _reg_args[_k] for _k in _reg_args.keys() if _reg_args[_k] is not None}
+    _params = self.get_cli_args(_cli_settings, version=_version_info)
 
-  _params = _plotter.unregistered_arg_parser(_unreg_args)
-  _params.update(_reg_args)
-  _plotter.export_xvg(**_params)
+    self.log_info("{}\n{}\n{}".format("=" * len(_version_info), _version_info, "=" * len(_version_info)))
+    self.update_attributes(self, _params)
+
+  def plot_cli(self, *args, **kwargs):
+    self._update_cli_args()
+    self.export_xvg(**kwargs)
